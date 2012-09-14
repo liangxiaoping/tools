@@ -101,6 +101,8 @@ CWinUDPSenderDlg::CWinUDPSenderDlg(CWnd* pParent /*=NULL*/)
 , m_strLocalAddr(_T("127.0.0.1"))
 , m_uLocalPort(12345)
 , m_uRecvCount(0)
+, m_uSentCount(0)
+, m_bBindLocal(FALSE)
 , m_bOpenLogs(FALSE)
 , m_socketfd(INVALID_SOCKET)
 , m_fp(NULL)
@@ -130,6 +132,7 @@ void CWinUDPSenderDlg::DoDataExchange(CDataExchange* pDX)
     DDX_Text(pDX, IDC_LOCAL_PORT, m_uLocalPort);
     DDV_MinMaxUInt(pDX, m_uLocalPort, 0, 65535);
     DDX_Text(pDX, IDC_RECV_COUNT, m_uRecvCount);
+    DDX_Text(pDX, IDC_SENT_COUNT, m_uSentCount);
     DDX_Text(pDX, IDC_SEND_TIMEOUT, m_ulTimeOut);
     DDX_Text(pDX, IDC_SEND_ELAPSED, m_ulElapseTime);
     DDX_Check(pDX, IDC_CHECK_CONTINUAL, m_bSendContinual);
@@ -328,19 +331,19 @@ void CWinUDPSenderDlg::CloseSocket()
 
  BOOL CWinUDPSenderDlg::BindSocket()
 {
-    UpdateData(TRUE); // 控件传递给变量
-
     CString strBtnBind = _T("");
     GetDlgItemText(IDC_BTN_BIND, strBtnBind);
 
     if (strBtnBind == _T("UnBind"))
     {
+        m_bBindLocal = FALSE;
         SetDlgItemText(IDC_BTN_BIND, _T("Bind"));
         GetDlgItem(IDC_LOCAL_ADDR)->EnableWindow(TRUE);
         GetDlgItem(IDC_LOCAL_PORT)->EnableWindow(TRUE);
     } 
     else if(strBtnBind == _T("Bind"))
     {
+        m_bBindLocal = TRUE;
         sockaddr_in sinaddrLocal;
         sinaddrLocal.sin_family         = AF_INET;
         sinaddrLocal.sin_port           = htons(m_uLocalPort);
@@ -439,7 +442,6 @@ BOOL CWinUDPSenderDlg::UdpRecv(TRecvBuf *buf)
     if (buf->size == SOCKET_ERROR)
     {
         ShowSockErrorMsg("recvfrom");
-        CloseSocket();
         return  FALSE;
     }
 
@@ -462,6 +464,8 @@ void CWinUDPSenderDlg::SendUdpDataByTimes()
     {
         if(UdpSend(m_sockaddrRemote, sendBuf, uSendLen))
         {
+            m_uSentCount++;
+            SetDlgItemInt(IDC_SENT_COUNT, m_uSentCount);
             WriteLogsToFile(sendBuf);
         }
     }
@@ -470,6 +474,11 @@ void CWinUDPSenderDlg::SendUdpDataByTimes()
 
 LRESULT CWinUDPSenderDlg::OnRecvData(WPARAM wParam, LPARAM lParam)
 {
+    if(!m_bBindLocal)
+    {
+      return TRUE;
+    }
+    
     if (WSAGETSELECTERROR(lParam))
     {
         ShowSockErrorMsg("OnRecvData");
@@ -479,7 +488,6 @@ LRESULT CWinUDPSenderDlg::OnRecvData(WPARAM wParam, LPARAM lParam)
     TRecvBuf recvBuf;
     if (UdpRecv(&recvBuf) != TRUE || recvBuf.size == 0)
     {
-        ShowSockErrorMsg("UdpRecv");
         return  FALSE;
     }
 
@@ -489,7 +497,7 @@ LRESULT CWinUDPSenderDlg::OnRecvData(WPARAM wParam, LPARAM lParam)
     SetDlgItemText(IDC_RECV_DATA, recvBuf.msgBuf);
 
     m_uRecvCount++;
-    UpdateData(FALSE); // 变量传递给控件
+    SetDlgItemInt(IDC_RECV_COUNT, m_uRecvCount);
     return TRUE;
 }
 
@@ -564,8 +572,6 @@ void CWinUDPSenderDlg::OnTimer(UINT_PTR nIDEvent)
 void CWinUDPSenderDlg::OnBnClickedBtnSend()
 {
     // TODO: Add your control notification handler code here
-        UpdateData(TRUE); // 控件传递给变量
-
     CString strBtnSend = _T("");
     GetDlgItemText(IDC_BTN_SEND, strBtnSend);
 
@@ -587,7 +593,7 @@ void CWinUDPSenderDlg::OnBnClickedBtnSend()
 
         SetDlgItemText(IDC_BTN_SEND, _T("Send"));
 
-        UpdateData(FALSE); // 变量传递给控件
+        // UpdateData(FALSE); // 变量传递给控件
     } 
     else if (strBtnSend == "Send")
     {
@@ -710,8 +716,10 @@ void CWinUDPSenderDlg::OnBnClickedClearData()
 {
     // TODO: Add your control notification handler code here
     m_uRecvCount = 0;
+    m_uSentCount = 0;
+    SetDlgItemInt(IDC_RECV_COUNT, m_uRecvCount);
+    SetDlgItemInt(IDC_SENT_COUNT, m_uSentCount);
     SetDlgItemText(IDC_RECV_DATA, _T(""));
-    UpdateData(FALSE); // 变量传递给控件
 }
 
 

@@ -83,6 +83,8 @@ private:
     CString       m_strLocalAddr;
     UINT          m_uLocalPort;
     UINT          m_uRecvCount;
+    UINT          m_uSentCount;
+    BOOL          m_bBindLocal;
 
     // Statics and logs
     BOOL          m_bOpenLogs;
