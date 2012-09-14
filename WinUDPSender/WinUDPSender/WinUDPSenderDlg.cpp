@@ -53,7 +53,7 @@ protected:
     virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 
     // Implementation
-    protected:
+protected:
     DECLARE_MESSAGE_MAP()
 public:
     virtual BOOL OnInitDialog();
@@ -597,7 +597,7 @@ void CWinUDPSenderDlg::OnBnClickedBtnSend()
     } 
     else if (strBtnSend == "Send")
     {
-        //
+        UpdateData(TRUE); // 控件传递给变量
 
         if (0 == m_uRemotePort)
         {
