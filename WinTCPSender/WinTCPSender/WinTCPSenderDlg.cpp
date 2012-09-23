@@ -93,7 +93,6 @@ CWinTCPSenderDlg::CWinTCPSenderDlg(CWnd* pParent /*=NULL*/)
 , m_uRemotePort(12345)
 , m_uSendTimes(1)
 , m_ulTimeOut(1000)
-, m_uSendTimer(0)
 , m_ulElapseTime(0)
 , m_uExecTimes(0)
 , m_bSendContinual(FALSE)
@@ -101,6 +100,7 @@ CWinTCPSenderDlg::CWinTCPSenderDlg(CWnd* pParent /*=NULL*/)
 , m_uLocalPort(12345)
 , m_uRecvCount(0)
 , m_uSentCount(0)
+, m_ulRetryDelayMs(kInitRetryDelayMs)
 , m_bBindLocal(FALSE)
 , m_connState(kDisconnected)
 , m_bOpenLogs(FALSE)
@@ -144,7 +144,7 @@ BEGIN_MESSAGE_MAP(CWinTCPSenderDlg, CDialogEx)
     ON_WM_PAINT()
     ON_WM_QUERYDRAGICON()
     ON_WM_TIMER()
-    ON_MESSAGE(WM_TCPRECVDATA ,&CWinTCPSenderDlg::OnRecvData)
+    ON_MESSAGE(WM_TCPEVENT, &CWinTCPSenderDlg::OnTCPEvent)
 
     ON_BN_CLICKED(IDC_BTN_CONNECT, &CWinTCPSenderDlg::OnBnClickedBtnConnect)
     ON_BN_CLICKED(IDC_BTN_SEND, &CWinTCPSenderDlg::OnBnClickedBtnSend)
@@ -277,7 +277,7 @@ BOOL CWinTCPSenderDlg::InitSocket()
         return FALSE;
     }
 
-    if (!AsyncSelect(m_hWnd))
+    if (!AsyncSelect(m_hWnd, FD_CONNECT))
     {
         CloseSocket();
         ShowSockErrorMsg("AsyncSelect");
@@ -328,11 +328,28 @@ BOOL CWinTCPSenderDlg::ConnetToServer()
         int err = WSAGetLastError();
         if(err != WSAEWOULDBLOCK && err != WSAEINVAL && err != WSAEINPROGRESS)
         {
-           ShowSockErrorMsg("connect error");
-           return FALSE;
+             WriteLogsToFile("connect error");
+             return FALSE;
+        }
+        else
+        {
+             WriteLogsToFile("connecting...");
         }
     }
 
+    return TRUE;
+}
+
+BOOL CWinTCPSenderDlg::ReTryConnect(ULONG ulRetryDelay)
+{
+    setState(kDisconnected);
+    // 开启定时器再重新连接
+    UINT_PTR upInstallFlag = SetTimer(kConnectTimerID, ulRetryDelay, NULL);
+    if(upInstallFlag == 0)
+    {
+        WriteLogsToFile("Can not install timer!");
+        return FALSE;
+    }
     return TRUE;
 }
 
@@ -369,9 +386,9 @@ BOOL CWinTCPSenderDlg::BindSocket()
     return TRUE;
 }
 
-BOOL CWinTCPSenderDlg::AsyncSelect(HWND hWnd)
+BOOL CWinTCPSenderDlg::AsyncSelect(HWND hWnd, long lEvent)
 {
-    int iret = WSAAsyncSelect(m_socketfd, hWnd, WM_TCPRECVDATA, FD_READ);
+    int iret = WSAAsyncSelect(m_socketfd, hWnd, WM_TCPEVENT, lEvent);
     if ( iret == SOCKET_ERROR)
     {
         ShowSockErrorMsg("WSAAsyncSelect");
@@ -388,36 +405,21 @@ BOOL CWinTCPSenderDlg::TcpSend(SOCKADDR_IN &sockAddr, const char *buf, UINT iLen
     {
         int err = WSAGetLastError();
         CString strMsg;
-        strMsg.Format(_T("%s error = %d"), "udpsend fail.", err);
+        strMsg.Format(_T("%s error = %d"), "send fail.", err);
         WriteLogsToFile(strMsg.GetBuffer());
-        
-        switch (err) 
+        if (err != WSAEWOULDBLOCK)
         {
-        case WSAENETDOWN:
-            break;
-
-        case WSAEHOSTUNREACH:
-            return  FALSE;
-
-        default:
-            return  FALSE;
-        }
-
-        if (ResetSocket() != TRUE)
-        {
-            return  FALSE;
-        }
-
-        if ( AsyncSelect(m_hWnd) != TRUE)
-        {
-            return  FALSE;
-        }
-
-        if (send(m_socketfd, buf, iLen, 0) == SOCKET_ERROR)
-        {
-            return  FALSE;
+            ShowSockErrorMsg("send error");
         }
     }
+
+    // TODO:如果发送缓冲区还有没发送完的数据，要关注FD_WRITE事件
+    //if (!AsyncSelect(m_hWnd, FD_WRITE|FD_CLOSE))
+    //{
+    //    CloseSocket();
+    //    ShowSockErrorMsg("AsyncSelect");
+    //    return;
+    //}
 
     return  TRUE;
 }
@@ -430,7 +432,7 @@ BOOL CWinTCPSenderDlg::TcpRecv(TRecvBuf *buf)
 
     if (buf->size == SOCKET_ERROR)
     {
-        ShowSockErrorMsg("recvfrom");
+        ShowSockErrorMsg("recv");
         return  FALSE;
     }
 
@@ -460,33 +462,102 @@ void CWinTCPSenderDlg::SendTcpDataByTimes()
     }
 }
 
-
-LRESULT CWinTCPSenderDlg::OnRecvData(WPARAM wParam, LPARAM lParam)
+LRESULT CWinTCPSenderDlg::OnTCPEvent(WPARAM wParam, LPARAM lParam)
 {
-    if(!m_bBindLocal)
-    {
-      return TRUE;
-    }
+    int err = WSAGETSELECTERROR(lParam);
     
-    if (WSAGETSELECTERROR(lParam))
+    switch (WSAGETSELECTEVENT(lParam))
     {
-        ShowSockErrorMsg("OnRecvData");
-        return  FALSE;
+        case FD_CONNECT:
+            if(err)
+            {
+                if(err == WSAEWOULDBLOCK  ||
+                   err == WSAECONNREFUSED || 
+                   err == WSAENETUNREACH  || 
+                   err == WSAEADDRNOTAVAIL||
+                   err == WSAEADDRINUSE)
+                {
+                    ReTryConnect(m_ulRetryDelayMs);
+                }
+                else
+                {
+                    ShowSockErrorMsg("connection refused.");
+                    return  FALSE;
+                }
+                
+                return TRUE;
+            }
+            setState(kConnected);
+            KillTimer(kConnectTimerID);
+
+            // 在连接成功后会收到携带FD_WRITE事件的消息，不关注
+            //if (!AsyncSelect(m_hWnd, FD_WRITE|FD_CLOSE))
+            if (!AsyncSelect(m_hWnd, FD_READ|FD_CLOSE))
+            {
+                CloseSocket();
+                ShowSockErrorMsg("AsyncSelect");
+                return FALSE;
+            }
+
+            SetDlgItemText(IDC_BTN_CONNECT, _T("Disconnect"));
+            GetDlgItem(IDC_REMOTE_ADDR)->EnableWindow(FALSE);
+            GetDlgItem(IDC_REMOTE_PORT)->EnableWindow(FALSE);
+            GetDlgItem(IDC_BTN_SEND)->EnableWindow(TRUE);
+            break;
+          
+        case FD_READ:
+            // TODO:接收缓冲区
+            if(!m_bBindLocal)
+            {
+                return TRUE;
+            }
+            
+            if(err)
+            {
+                ShowSockErrorMsg("OnTCPEvent");
+                return  FALSE;
+            }
+            
+            TRecvBuf recvBuf;
+            if (TcpRecv(&recvBuf) != TRUE || recvBuf.size == 0)
+            {
+                return  FALSE;
+            }
+
+            WriteLogsToFile(recvBuf.msgBuf);
+
+            // 只显示最后一次接受的数据
+            SetDlgItemText(IDC_RECV_DATA, recvBuf.msgBuf);
+
+            m_uRecvCount++;
+            SetDlgItemInt(IDC_RECV_COUNT, m_uRecvCount);
+            break;
+
+        case FD_WRITE:
+            // FD_WRITE事件不同于FD_READ, 
+            // 我们只能通过FD_WRITE事件判断是否可以向对方发送数据， 
+            // 而不是在事件处理中向对方发数据
+            //if (!AsyncSelect(m_hWnd, FD_READ|FD_CLOSE))
+            //{
+            //    CloseSocket();
+            //    ShowSockErrorMsg("AsyncSelect");
+            //    return FALSE;
+            //}
+
+            // TODO:发送缓冲区
+            // TODO:将发送缓冲区的数据发送完
+            // TODO:如果发送缓冲区已经没有数据了，要取消关注FD_WRITE事件
+            break;
+
+        case FD_CLOSE:
+            setState(kDisconnected);
+            ResetSocket();
+            break;
+          
+        default:
+            break;
     }
 
-    TRecvBuf recvBuf;
-    if (TcpRecv(&recvBuf) != TRUE || recvBuf.size == 0)
-    {
-        return  FALSE;
-    }
-
-    WriteLogsToFile(recvBuf.msgBuf);
-
-    // 只显示最后一次接受的数据
-    SetDlgItemText(IDC_RECV_DATA, recvBuf.msgBuf);
-
-    m_uRecvCount++;
-    SetDlgItemInt(IDC_RECV_COUNT, m_uRecvCount);
     return TRUE;
 }
 
@@ -546,13 +617,22 @@ void CWinTCPSenderDlg::OnTimer(UINT_PTR nIDEvent)
 {
     // TODO: Add your message handler code here and/or call default
 
-    if (nIDEvent == m_uSendTimer)
+    if (nIDEvent == kConnectTimerID)
+    {
+        m_ulRetryDelayMs = min(m_ulRetryDelayMs * 2, kMaxRetryDelayMs);
+        ConnetToServer();
+    }
+    else if (nIDEvent == kSendTimerID)
     {
         SendTcpDataByTimes();
         m_uExecTimes++;
         m_ulElapseTime = m_uExecTimes * m_ulTimeOut;
 
         SetDlgItemInt(IDC_SEND_ELAPSED, m_ulElapseTime, true);
+    }
+    else
+    {
+        //
     }
 
     CDialogEx::OnTimer(nIDEvent);
@@ -585,11 +665,6 @@ void CWinTCPSenderDlg::OnBnClickedBtnConnect()
             ResetSocket();
             return;
         }
-        setState(kConnected);
-        SetDlgItemText(IDC_BTN_CONNECT, _T("Disconnect"));
-        GetDlgItem(IDC_REMOTE_ADDR)->EnableWindow(FALSE);
-        GetDlgItem(IDC_REMOTE_PORT)->EnableWindow(FALSE);
-        GetDlgItem(IDC_BTN_SEND)->EnableWindow(TRUE);
     }
 }
 
@@ -598,6 +673,7 @@ void CWinTCPSenderDlg::OnBnClickedBtnSend()
     // TODO: Add your control notification handler code here
     if (m_connState != kConnected)
     {
+        ShowSockErrorMsg("not connected.");
         return;
     }
     
@@ -606,7 +682,7 @@ void CWinTCPSenderDlg::OnBnClickedBtnSend()
 
     if (strBtnSend == "Stop")
     {
-        KillTimer(m_uSendTimer);
+        KillTimer(kSendTimerID);
         GetDlgItem(IDC_SEND_DATA)->EnableWindow(TRUE);
         GetDlgItem(IDC_SEND_TIMES)->EnableWindow(TRUE);
         GetDlgItem(IDC_SEND_TIMEOUT)->EnableWindow(TRUE);
@@ -620,6 +696,7 @@ void CWinTCPSenderDlg::OnBnClickedBtnSend()
     else if (strBtnSend == "Send")
     {
         UpdateData(TRUE); // 控件传递给变量
+        
         if (0 == m_uRemotePort)
         {
             MessageBox(_T("LocalPort is 0!"));
@@ -653,7 +730,7 @@ void CWinTCPSenderDlg::OnBnClickedBtnSend()
         if (m_bSendContinual)
         {
             // 开启定时器,连续发送
-            UINT_PTR upInstallFlag = SetTimer(m_uSendTimer, m_ulTimeOut, NULL);  //定时m_ulTimeOut(ms)
+            UINT_PTR upInstallFlag = SetTimer(kSendTimerID, m_ulTimeOut, NULL);  //定时m_ulTimeOut(ms)
             if(upInstallFlag == 0)
             {
                 MessageBox(_T("Can not install timer!"));
@@ -707,6 +784,7 @@ void CWinTCPSenderDlg::OnBnClickedBtnBind()
     GetDlgItem(IDC_REMOTE_ADDR)->EnableWindow(TRUE);
     GetDlgItem(IDC_REMOTE_PORT)->EnableWindow(TRUE);
     GetDlgItem(IDC_BTN_SEND)->EnableWindow(FALSE);
+    SetDlgItemText(IDC_BTN_CONNECT, _T("Connect"));
 
     CString strBtnBind = _T("");
     GetDlgItemText(IDC_BTN_BIND, strBtnBind);

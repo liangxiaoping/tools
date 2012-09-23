@@ -37,11 +37,12 @@ public:
     BOOL InitSocket();
     BOOL BindSocket();
     BOOL ConnetToServer();
+    BOOL ReTryConnect(ULONG ulRetryDelay);
     BOOL ResetSocket();
     void CloseSocket();
 
     BOOL LoadLocalIPAddr();
-    BOOL AsyncSelect(HWND hWnd);
+    BOOL AsyncSelect(HWND hWnd, long lEvent);
     
     BOOL TcpSend(SOCKADDR_IN &sockAddr, const char *buf, UINT iLen);
     BOOL TcpRecv(TRecvBuf *buf);
@@ -55,7 +56,7 @@ public:
     void setState(States s) { m_connState = s; }
 
 public:
-    LRESULT OnRecvData(WPARAM wParam, LPARAM lParam);
+    LRESULT OnTCPEvent(WPARAM wParam, LPARAM lParam);
 
     afx_msg void OnBnClickedBtnConnect();
     afx_msg void OnBnClickedBtnSend();
@@ -81,7 +82,6 @@ private:
     UINT          m_uSendTimes;
     ULONG         m_ulTimeOut;
     ULONG         m_ulElapseTime;
-    UINT_PTR      m_uSendTimer;
     UINT          m_uExecTimes;
     BOOL          m_bSendContinual;
 
@@ -90,6 +90,7 @@ private:
     UINT          m_uLocalPort;
     UINT          m_uRecvCount;
     UINT          m_uSentCount;
+    ULONG         m_ulRetryDelayMs;
     BOOL          m_bBindLocal;
     States        m_connState;
 
