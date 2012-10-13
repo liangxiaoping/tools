@@ -690,7 +690,8 @@ void CWinTCPSenderDlg::OnBnClickedBtnSend()
         GetDlgItem(IDC_CHECK_CONTINUAL)->EnableWindow(TRUE);
         //GetDlgItem(IDC_CHECK_LOG)->EnableWindow(TRUE);
         GetDlgItem(IDC_BTN_BIND)->EnableWindow(TRUE);
-
+        GetDlgItem(IDC_BTN_CONNECT)->EnableWindow(TRUE);
+        
         SetDlgItemText(IDC_BTN_SEND, _T("Send"));
     } 
     else if (strBtnSend == "Send")
@@ -744,6 +745,7 @@ void CWinTCPSenderDlg::OnBnClickedBtnSend()
             GetDlgItem(IDC_SEND_ELAPSED)->EnableWindow(FALSE);
             GetDlgItem(IDC_CHECK_CONTINUAL)->EnableWindow(FALSE);
             GetDlgItem(IDC_BTN_BIND)->EnableWindow(FALSE);
+            GetDlgItem(IDC_BTN_CONNECT)->EnableWindow(FALSE);
             //GetDlgItem(IDC_CHECK_LOG)->EnableWindow(FALSE);
 
             SetDlgItemText(IDC_BTN_SEND, _T("Stop"));
@@ -831,6 +833,12 @@ void CWinTCPSenderDlg::OnBnClickedCheckLog()
 {
     // TODO: Add your control notification handler code here
     UpdateData(TRUE); // 控件传递给变量
+
+    if(!m_bOpenLogs)
+    {
+      fflush(m_fp);
+      fclose(m_fp);
+    }
 }
 
 
